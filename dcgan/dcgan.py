@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 import sys
 
 import numpy as np
+import pandas as pd
 
 class DCGAN():
     def __init__(self):
@@ -29,6 +30,7 @@ class DCGAN():
         self.channels = 3
         self.img_shape = (self.img_rows, self.img_cols, self.channels)
         self.latent_dim = 100
+        self.num_epochs = 1
 
         optimizer = Adam(0.0002, 0.5)
 
@@ -59,19 +61,24 @@ class DCGAN():
     def build_generator(self):
         #input_const was 7 for 28x28 images. For 32x32 images 7 doesn't work (array mismatch), but 8 does work
         input_const = 8
+        KERNEL = 3
+        STRIDES = 1
         model = Sequential()
 
         model.add(Dense(128 * input_const * input_const, activation="relu", input_dim=self.latent_dim))
         model.add(Reshape((input_const, input_const, 128)))
         model.add(UpSampling2D())
-        model.add(Conv2D(128, kernel_size=3, padding="same"))
+        model.add(Conv2D(128, kernel_size=KERNEL, strides=STRIDES, padding="same"))
         model.add(BatchNormalization(momentum=0.8))
         model.add(Activation("relu"))
         model.add(UpSampling2D())
-        model.add(Conv2D(64, kernel_size=3, padding="same"))
+        model.add(Conv2D(64, kernel_size=KERNEL, strides=STRIDES, padding="same"))
         model.add(BatchNormalization(momentum=0.8))
         model.add(Activation("relu"))
-        model.add(Conv2D(self.channels, kernel_size=3, padding="same"))
+        model.add(Conv2D(32, kernel_size=KERNEL, strides=STRIDES, padding="same"))
+        model.add(BatchNormalization(momentum=0.8))
+        model.add(Activation("relu"))
+        model.add(Conv2D(self.channels, kernel_size=KERNEL, padding="same"))
         model.add(Activation("tanh"))
 
         model.summary()
@@ -82,57 +89,25 @@ class DCGAN():
         print(img.shape)
 
         return Model(noise, img)
-        """
-        input_layer = Input(shape=(self.latent_dim,))
-        
-        hid = Dense(128 * 16 * 16, activation='relu')(input_layer)    
-        hid = BatchNormalization(momentum=0.9)(hid)
-        hid = LeakyReLU(alpha=0.1)(hid)
-        hid = Reshape((16, 16, 128))(hid)
-    
-        hid = Conv2D(128, kernel_size=5, strides=1,padding='same')(hid)
-        hid = BatchNormalization(momentum=0.9)(hid)    
-        #hid = Dropout(0.5)(hid)
-        hid = LeakyReLU(alpha=0.1)(hid)
-
-        hid = Conv2DTranspose(128, 4, strides=2, padding='same')(hid)
-        hid = BatchNormalization(momentum=0.9)(hid)
-        hid = LeakyReLU(alpha=0.1)(hid)
-
-        hid = Conv2D(128, kernel_size=5, strides=1, padding='same')(hid)
-        hid = BatchNormalization(momentum=0.9)(hid)
-        #hid = Dropout(0.5)(hid)
-        hid = LeakyReLU(alpha=0.1)(hid)
-    
-        hid = Conv2D(128, kernel_size=5, strides=1, padding='same')(hid)
-        hid = BatchNormalization(momentum=0.9)(hid)
-        hid = LeakyReLU(alpha=0.1)(hid)
-                      
-        hid = Conv2D(3, kernel_size=5, strides=1, padding="same")(hid)
-        out = Activation("tanh")(hid)
-
-        model = Model(input_layer, out)
-        model.summary()
-  
-        return model, out
-        """
+      
     def build_discriminator(self):
+        KERNEL = 3
 
         model = Sequential()
 
-        model.add(Conv2D(32, kernel_size=3, strides=2, input_shape=self.img_shape, padding="same"))
+        model.add(Conv2D(32, kernel_size=KERNEL, strides=2, input_shape=self.img_shape, padding="same"))
         model.add(LeakyReLU(alpha=0.2))
         model.add(Dropout(0.25))
-        model.add(Conv2D(64, kernel_size=3, strides=2, padding="same"))
+        model.add(Conv2D(64, kernel_size=KERNEL, strides=2, padding="same"))
         model.add(ZeroPadding2D(padding=((0,1),(0,1))))
         model.add(BatchNormalization(momentum=0.8))
         model.add(LeakyReLU(alpha=0.2))
         model.add(Dropout(0.25))
-        model.add(Conv2D(128, kernel_size=3, strides=2, padding="same"))
+        model.add(Conv2D(128, kernel_size=KERNEL, strides=2, padding="same"))
         model.add(BatchNormalization(momentum=0.8))
         model.add(LeakyReLU(alpha=0.2))
         model.add(Dropout(0.25))
-        model.add(Conv2D(256, kernel_size=3, strides=1, padding="same"))
+        model.add(Conv2D(256, kernel_size=KERNEL, strides=1, padding="same"))
         model.add(BatchNormalization(momentum=0.8))
         model.add(LeakyReLU(alpha=0.2))
         model.add(Dropout(0.25))
@@ -146,7 +121,6 @@ class DCGAN():
 
         return Model(img, validity)
         
-
 
     # Function to unpickle the dataset
     def unpickle_all_data(self, directory):
@@ -226,6 +200,9 @@ class DCGAN():
         valid = np.ones((batch_size, 1))
         fake = np.zeros((batch_size, 1))
 
+        #record accuracy of descriminator and error of generator for each generation
+        d_acc = []
+        g_losses = []
         for epoch in range(epochs):
 
             # ---------------------
@@ -254,10 +231,31 @@ class DCGAN():
 
             # Plot the progress
             print ("%d [D loss: %f, acc.: %.2f%%] [G loss: %f]" % (epoch, d_loss[0], 100*d_loss[1], g_loss))
+            d_acc.append(100*d_loss[1])
+            g_losses.append(g_loss)
 
             # If at save interval => save generated image samples
             if epoch % save_interval == 0:
                 self.save_imgs(epoch)
+            
+        if epoch == self.num_epochs - 1:
+            fig = plt.figure()
+            ax = plt.subplot(111)
+            ax.plot(style='k.')
+            plt.xlabel("Generation")
+            plt.ylabel("Accuracy")
+            plt.title("Discriminator Accuracy")
+            plt.scatter(range(len(d_acc)), d_acc, alpha = .1)
+            fig.savefig("cifar_generator_output4/acc_scatter_plot.png")
+            
+            fig = plt.figure()
+            ax = plt.subplot(111)
+            ax.plot(style='k.')
+            plt.xlabel("Generation")
+            plt.ylabel("Loss")
+            plt.title("Generator Loss")
+            plt.scatter(range(len(g_losses)), g_losses, alpha = .1)
+            fig.savefig("cifar_generator_output4/g_loss_scatter_plot.png")
 
     def save_imgs(self, epoch):
         r, c = 5, 5
@@ -278,10 +276,10 @@ class DCGAN():
                 #axs[i,j].imshow(gen_imgs[cnt, :,:,0])
                 #axs[i,j].axis('off')
                 cnt += 1
-        fig.savefig("cifar_generator_output/cifar_%d.png" % epoch)
+        fig.savefig("cifar_generator_output4/cifar_%d.png" % epoch)
         plt.close()
 
 
 if __name__ == '__main__':
     dcgan = DCGAN()
-    dcgan.train(epochs=4001, batch_size=32, save_interval=50)
+    dcgan.train(epochs=dcgan.num_epochs, batch_size=32, save_interval=50)
